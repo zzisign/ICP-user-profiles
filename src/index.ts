@@ -1,5 +1,5 @@
 import { $query, $update, Record, StableBTreeMap, Vec, match, Result, nat64, ic, Opt } from 'azle';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4, validate as isValidUUID } from 'uuid';
 
 type UserProfile = Record<{
     id: string;
@@ -18,178 +18,238 @@ type UserProfilePayload = Record<{
 
 const userProfileStorage = new StableBTreeMap<string, UserProfile>(0, 44, 1024);
 
+// Function to check if a string is a valid UUID
+function isValidUUIDString(str: string): boolean {
+    return isValidUUID(str);
+}
+
+// Function to get all user profiles
 $query;
 export function getUserProfiles(): Result<Vec<UserProfile>, string> {
-    return Result.Ok(userProfileStorage.values());
+    try {
+        const profiles = userProfileStorage.values();
+        return Result.Ok(profiles);
+    } catch (error) {
+        return Result.Err(`Failed to retrieve user profiles: ${error}`);
+    }
 }
 
+// Function to get a user profile by ID
 $query;
 export function getUserProfile(id: string): Result<UserProfile, string> {
-    return match(userProfileStorage.get(id), {
-        Some: (profile: any) => Result.Ok<UserProfile, string>(profile),
-        None: () => Result.Err<UserProfile, string>(`a user profile with id=${id} not found`)
-    });
-}
-
-$update;
-export function createUserProfile(payload: UserProfilePayload): Result<UserProfile, string> {
-    const userProfile: UserProfile = {
-        id: uuidv4(),
-        createdAt: ic.time(),
-        updatedAt: Opt.None,
-        followers: [],
-        following: [],
-        ...payload
-    };
-    userProfileStorage.insert(userProfile.id, userProfile);
-    return Result.Ok(userProfile);
-}
-
-$update;
-export function updateUserProfile(id: string, payload: UserProfilePayload): Result<UserProfile, string> {
-    return match(userProfileStorage.get(id), {
-        Some: (profile: any) => {
-            const updatedProfile: UserProfile = { ...profile, ...payload, updatedAt: Opt.Some(ic.time()) };
-            userProfileStorage.insert(profile.id, updatedProfile);
-            return Result.Ok<UserProfile, string>(updatedProfile);
-        },
-        None: () => Result.Err<UserProfile, string>(`couldn't update a user profile with id=${id}. Profile not found`)
-    });
-}
-
-$update;
-export function deleteUserProfile(id: string): Result<UserProfile, string> {
-    return match(userProfileStorage.remove(id), {
-        Some: (deletedProfile: any) => Result.Ok<UserProfile, string>(deletedProfile),
-        None: () => Result.Err<UserProfile, string>(`couldn't delete a user profile with id=${id}. Profile not found.`)
-    });
-}
-
-$update;
-export function followProfile(userId: string, profileId: string): Result<UserProfile, string> {
-    // Get the user profile requesting the follow
-    const user1Following = match(userProfileStorage.get(userId), {
-        Some: (user) => {
-            // Check if the user is already following the account to be followed
-            // Return the user profile if account to be followed is already being followed
-            if(user.following.includes(profileId)) {
-                return Result.Ok<UserProfile, string>(user)
-            } else { // Else run the code below
-                // Save the user's initial following in a variable
-                const userFollowing: Vec<string> = user.following;
-                // Add the new user to be followed to the existing users already followed
-                userFollowing.push(profileId);
-                const user1Profile: UserProfile = {
-                    ...user,
-                    following: userFollowing // Assign the following variable to the list all of the users followed including the new user
-                }
-                // Save the current user's updated status in the userProfileStorage
-                userProfileStorage.insert(user.id, user1Profile);
-                // Return the user's profile with the updated changes
-                return Result.Ok<UserProfile, string>(user1Profile);
-            }
-        },
-        None: () => Result.Err<UserProfile, string>("Unable to carry out the following function")
-    })
-
-    // Get the profile of the user to be followed
-    match(userProfileStorage.get(profileId), {
-        Some: (user) => {
-            // Check if the account is already being followed by the user requesting the follow
-            // If yes, return the user's profile with no changes made
-            if(user.following.includes(userId)) {
-                return Result.Ok<UserProfile, string>(user)
-            } else { // Else run the code below
-                // Get the followers of the user to be followed and store in a variable
-                const userFollowers: Vec<string> = user.followers;
-                // Add the user to the followers list of the variable created
-                userFollowers.push(userId);
-                const user2Profile: UserProfile = {
-                    ...user,
-                    followers: userFollowers // Update the followers of the user
-                }
-                // Update the user's profile in userProfileStorage
-                userProfileStorage.insert(user.id, user2Profile);
-                // Return the user with the updated followers
-                return Result.Ok<UserProfile, string>(user2Profile);
-            }
-        },
-        // If an error is encountered, return the below
-        None: () => Result.Err<UserProfile, string>("Unable to carry out the following function")
-    })
-
-    // Return the user with the new updated following variable
-    return user1Following
-}
-
-$update;
-export function unfollowProfile(userId: string, profileId: string): Result<UserProfile, string> {
-    // Get the user profile requesting the unfollow
-    const user1Unfollowing = match(userProfileStorage.get(userId), {
-        Some: (user) => {
-            // Check if the user to be unfollowed is part of the following list
-            // If true, run the code below
-            if(user.following.includes(profileId)) {
-                // Get the index of the user to be unfollowed from the following list and save in a variable
-                const unfollowedUserIndex = user.following.indexOf(profileId)
-                // Using splice method and the user's index, remove the user from the following list
-                user.following.splice(unfollowedUserIndex, 1)
-                const user1Profile: UserProfile = {
-                    ...user,
-                    following: user.following  // Save the new following list
-                }
-                // Update the user's profile in userProfileStorage
-                userProfileStorage.insert(user.id, user1Profile);
-                // Return the user's profile with the updated following list
-                return Result.Ok<UserProfile, string>(user1Profile);
-            } else { // Else if user is not in the following list, return the user profile with no changes made 
-                return Result.Ok<UserProfile, string>(user)
-            }
-        },
-        // If an error is encountered, return the code below
-        None: () => Result.Err<UserProfile, string>("Unable to carry out the following function")
-    })
-
-    // Get the profile of the user to be unfollowed
-    match(userProfileStorage.get(profileId), {
-        Some: (user) => {
-            // Check if the user requesting the unfollowing is in the followers list
-            // If true, run the code below
-            if(user.followers.includes(userId)) {
-                // Get the index of the user requesting the unfollowing from the followers list
-                const unfollowingUserIndex = user.followers.indexOf(userId)
-                // Using splice, remove the user from the followers list
-                user.followers.splice(unfollowingUserIndex, 1)
-                const user1Profile: UserProfile = {
-                    ...user,
-                    followers: user.followers // Save the new followers list
-                }
-                // Update the user's profile in userProfileStorage
-                userProfileStorage.insert(user.id, user1Profile);
-                // Return the user with the updated followers list
-                return Result.Ok<UserProfile, string>(user1Profile);
-            } else { 
-                // Else if the user requesting the unfollow is not part of the followers list,
-                //  return the user without making any changes
-                return Result.Ok<UserProfile, string>(user)
-            }
-        },
-        // If an error is encountered, return the code below
-        None: () => Result.Err<UserProfile, string>(`Unable to remove the follower with the id = ${userId}`)
-    })
-
-    return user1Unfollowing
-}
-
-// a workaround to make uuid package work with Azle
-globalThis.crypto = {
-    getRandomValues: () => {
-        let array = new Uint8Array(32);
-
-        for (let i = 0; i < array.length; i++) {
-            array[i] = Math.floor(Math.random() * 256);
+    try {
+        // ID Validation
+        if (!id) {
+            throw new Error(`Invalid ID: ${id}`);
         }
 
-        return array;
+        const profile = match(userProfileStorage.get(id), {
+            Some: (p: any) => Result.Ok<UserProfile, string>(p),
+            None: () => Result.Err<UserProfile, string>(`A user profile with id=${id} not found`),
+        });
+
+        return profile;
+    } catch (error) {
+        return Result.Err(`Error retrieving user profile: ${error}`);
     }
-};
+}
+
+// Function to create a new user profile
+$update;
+export function createUserProfile(payload: UserProfilePayload): Result<UserProfile, string> {
+    try {
+        // Payload Validation
+        if (!payload.username || !payload.bio) {
+            throw new Error("Invalid payload");
+        }
+
+        const id = uuidv4();
+
+      
+        const userProfile: UserProfile = {
+            id: id,
+            createdAt: ic.time(),
+            updatedAt: Opt.None,
+            followers: [],
+            following: [],
+            username: payload.username,
+            bio: payload.bio,
+        };
+
+        userProfileStorage.insert(userProfile.id, userProfile);
+
+        return Result.Ok(userProfile);
+    } catch (error) {
+        return Result.Err(`Failed to create user profile: ${error}`);
+    }
+}
+
+// Function to update a user profile
+$update;
+export function updateUserProfile(id: string, payload: UserProfilePayload): Result<UserProfile, string> {
+    try {
+        // ID Validation
+        if (!id) {
+            throw new Error(`Invalid ID: ${id}`);
+        }
+
+        // Payload Validation
+        if (!payload.username || !payload.bio) {
+            throw new Error("Invalid payload");
+        }
+
+        const profile = match(userProfileStorage.get(id), {
+            Some: (p: any) => {
+                const updatedProfile: UserProfile = {
+                    ...p,
+                    username: payload.username,
+                    bio: payload.bio,
+                    updatedAt: Opt.Some(ic.time()),
+                };
+                userProfileStorage.insert(p.id, updatedProfile);
+                return Result.Ok<UserProfile, string>(updatedProfile);
+            },
+            None: () => Result.Err<UserProfile, string>(`Couldn't update user profile with id=${id}. Profile not found`),
+        });
+
+        return profile;
+    } catch (error) {
+        return Result.Err(`Error updating user profile: ${error}`);
+    }
+}
+
+// Function to delete a user profile by ID
+$update;
+export function deleteUserProfile(id: string): Result<UserProfile, string> {
+    try {
+        // ID Validation
+        if (!id) {
+            throw new Error(`Invalid ID: ${id}`);
+        }
+
+        const profile = match(userProfileStorage.remove(id), {
+            Some: (deletedProfile: any) => Result.Ok<UserProfile, string>(deletedProfile),
+            None: () => Result.Err<UserProfile, string>(`Couldn't delete user profile with id=${id}. Profile not found.`),
+        });
+
+        return profile;
+    } catch (error) {
+        return Result.Err(`Error deleting user profile: ${error}`);
+    }
+}
+
+// Function to follow a user profile
+$update;
+export function followProfile(userId: string, profileId: string): Result<UserProfile, string> {
+    try {
+        // ID Validation
+        if (!userId || !profileId) {
+            throw new Error(`Invalid user or profile ID`);
+        }
+
+        const user1Following = match(userProfileStorage.get(userId), {
+            Some: (user) => {
+                if (user.following.includes(profileId)) {
+                    return Result.Ok<UserProfile, string>(user);
+                } else {
+                    const userFollowing: Vec<string> = user.following;
+                    userFollowing.push(profileId);
+                    const user1Profile: UserProfile = {
+                        ...user,
+                        following: userFollowing,
+                    };
+                    userProfileStorage.insert(user.id, user1Profile);
+                    return Result.Ok<UserProfile, string>(user1Profile);
+                }
+            },
+            None: () => Result.Err<UserProfile, string>("Unable to carry out the following function"),
+        });
+
+        match(userProfileStorage.get(profileId), {
+            Some: (user) => {
+                if (user.followers.includes(userId)) {
+                    return Result.Ok<UserProfile, string>(user);
+                } else {
+                    const userFollowers: Vec<string> = user.followers;
+                    userFollowers.push(userId);
+                    const user2Profile: UserProfile = {
+                        ...user,
+                        followers: userFollowers,
+                    };
+                    userProfileStorage.insert(user.id, user2Profile);
+                    return Result.Ok<UserProfile, string>(user2Profile);
+                }
+            },
+            None: () => Result.Err<UserProfile, string>("Unable to carry out the following function"),
+        });
+
+        return user1Following;
+    } catch (error) {
+        return Result.Err(`Error following user profile: ${error}`);
+    }
+}
+
+// Function to unfollow a user profile
+$update;
+export function unfollowProfile(userId: string, profileId: string): Result<UserProfile, string> {
+    try {
+        // ID Validation
+        if (!userId || !profileId) {
+            throw new Error(`Invalid user or profile ID`);
+        }
+
+        const user1Unfollowing = match(userProfileStorage.get(userId), {
+            Some: (user) => {
+                if (user.following.includes(profileId)) {
+                    const unfollowedUserIndex = user.following.indexOf(profileId);
+                    user.following.splice(unfollowedUserIndex, 1);
+                    const user1Profile: UserProfile = {
+                        ...user,
+                        following: user.following,
+                    };
+                    userProfileStorage.insert(user.id, user1Profile);
+                    return Result.Ok<UserProfile, string>(user1Profile);
+                } else {
+                    return Result.Ok<UserProfile, string>(user);
+                }
+            },
+            None: () => Result.Err<UserProfile, string>("Unable to carry out the unfollowing function"),
+        });
+
+        match(userProfileStorage.get(profileId), {
+            Some: (user) => {
+                if (user.followers.includes(userId)) {
+                    const unfollowingUserIndex = user.followers.indexOf(userId);
+                    user.followers.splice(unfollowingUserIndex, 1);
+                    const user1Profile: UserProfile = {
+                        ...user,
+                        followers: user.followers,
+                    };
+                    userProfileStorage.insert(user.id, user1Profile);
+                    return Result.Ok<UserProfile, string>(user1Profile);
+                } else {
+                    return Result.Ok<UserProfile, string>(user);
+                }
+            },
+            None: () => Result.Err<UserProfile, string>(`Unable to remove the follower with the id=${userId}`),
+        });
+
+        return user1Unfollowing;
+    } catch (error) {
+        return Result.Err(`Error unfollowing user profile: ${error}`);
+    }
+}
+
+// Cryptographic utility for generating random values
+globalThis.crypto = {
+    // @ts-ignore
+    getRandomValues: () => {
+      let array = new Uint8Array(32);
+      for (let i = 0; i < array.length; i++) {
+        array[i] = Math.floor(Math.random() * 256);
+      }
+      return array;
+    },
+  };
+  
+  
